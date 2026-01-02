@@ -72,3 +72,30 @@ set PHOTOBRIDGE_API_BASE=https://api.yourdomain.com  # hoặc http://localhost:8
 
 Sau đó mở ứng dụng PhotoBridge → đăng nhập bằng tài khoản bạn đã tạo ở bước 3.
 
+### 7. Docker (build & run trên AWS EC2)
+
+1. Cài Docker trên EC2 (Amazon Linux 2023):
+   ```
+   sudo dnf install docker -y
+   sudo systemctl enable --now docker
+   sudo usermod -aG docker ec2-user  # đăng xuất & vào lại để áp dụng
+   ```
+2. Chuẩn bị file cấu hình môi trường `backend/.env` với `DATABASE_URL`, `JWT_SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`.
+3. Build image (chạy từ thư mục gốc repo):
+   ```
+   docker build -t photobridge-auth backend
+   ```
+4. Chạy container:
+   ```
+   docker run -d \
+     --name photobridge-auth \
+     --env-file backend/.env \
+     -p 8000:8000 \
+     photobridge-auth
+   ```
+   - Container dùng `uvicorn backend.main:app --host 0.0.0.0 --port 8000`.
+   - Dừng / cập nhật: `docker stop photobridge-auth && docker rm photobridge-auth` rồi build lại image.
+5. Bật security group / firewall cho cổng 80/443 (khuyến nghị đặt reverse proxy như Nginx hoặc ALB và chỉ mở port nội bộ 8000).
+
+> Nếu bạn muốn push image lên ECR thay vì build trực tiếp trên EC2, đổi bước 3 thành `docker buildx build --platform linux/amd64 -t <aws_account>.dkr.ecr.../photobridge-auth:latest backend` rồi `docker push ...`.
+

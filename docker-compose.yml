@@ -1,0 +1,9 @@
+version: "3.9"
+
+services:
+  photobridge-be:
+    build: .
+    container_name: photobridge-be
+    restart: always
+    ports:
+      - "80:8000"
