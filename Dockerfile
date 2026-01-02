@@ -10,7 +10,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY PhotoBridge_BE/requirements.txt /tmp/requirements.txt
+COPY requirements.txt /tmp/requirements.txt
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r /tmp/requirements.txt
