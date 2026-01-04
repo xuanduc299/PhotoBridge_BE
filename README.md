@@ -55,14 +55,30 @@ API docs: http://localhost:8000/docs
 - `POST /auth/refresh`: nhận JSON `{"refresh_token": "..."}` để lấy cặp token mới (token cũ bị thu hồi). Dùng cho tính năng auto login của desktop app.
 - Tài khoản role `viewer` tự động được gán trạng thái dùng thử (`account_settings.status = "trial"`) trong 1 ngày. Khi `trial_ends_at` đã qua, backend trả 403 và chuyển trạng thái thành `expired`. Các role khác mặc định `active`. Có thể chỉnh thủ công bảng `account_settings`.
 
-### 5. Deploy (Render/AWS/etc.)
+### 6. Admin console (login + CRUD users)
+
+- Mở `http://localhost:8000/admin` (hoặc domain bạn deploy) để truy cập giao diện quản trị thuần HTML/JS.
+- Đăng nhập bằng user có role `admin`. Token đăng nhập được lưu tạm thời trên browser và dùng để gọi các API quản trị.
+- Tính năng có sẵn:
+  - Xem danh sách user, roles, trạng thái active.
+  - Tạo user mới (set username, password, display name, roles, trạng thái active).
+  - Sửa user (đổi display name, roles, trạng thái, đặt lại password).
+  - Xóa user khác (không thể xóa hoặc vô hiệu hóa tài khoản đang đăng nhập).
+- Endpoint phục vụ giao diện và API quản trị:
+  - `GET /admin` → trả về trang HTML.
+  - `GET /admin/users` → trả danh sách user (chỉ admin).
+  - `POST /admin/users` → tạo user mới.
+  - `PUT /admin/users/{user_id}` → cập nhật user.
+  - `DELETE /admin/users/{user_id}` → xóa user (trừ user đang đăng nhập).
+
+### 7. Deploy (Render/AWS/etc.)
 
 1. Push backend folder lên repo riêng hoặc cùng repo.
 2. Tạo service (Render Web Service, Elastic Beanstalk, ECS, v.v.) dùng image Python và chạy `uvicorn backend.main:app --host 0.0.0.0 --port 8000`.
 3. Cấu hình biến môi trường: `DATABASE_URL` (chuỗi Neon), `JWT_SECRET_KEY`.
 4. Mở cổng 80/443 và trỏ domain `api.yourdomain.com` tới service.
 
-### 6. PhotoBridge desktop configuration
+### 8. PhotoBridge desktop configuration
 
 Trên máy client đặt:
 
@@ -72,7 +88,7 @@ set PHOTOBRIDGE_API_BASE=https://api.yourdomain.com  # hoặc http://localhost:8
 
 Sau đó mở ứng dụng PhotoBridge → đăng nhập bằng tài khoản bạn đã tạo ở bước 3.
 
-### 7. Docker (build & run trên AWS EC2)
+### 9. Docker (build & run trên AWS EC2)
 
 1. Cài Docker trên EC2 (Amazon Linux 2023):
    ```

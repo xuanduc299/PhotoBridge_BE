@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Iterable, Optional
 
-from sqlalchemy import delete, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session, selectinload
 
 from . import models
 
@@ -12,6 +12,10 @@ from . import models
 def get_user_by_username(db: Session, username: str) -> Optional[models.User]:
     stmt = select(models.User).where(models.User.username == username)
     return db.execute(stmt).scalar_one_or_none()
+
+
+def get_user_by_id(db: Session, user_id: int) -> Optional[models.User]:
+    return db.get(models.User, user_id)
 
 
 def list_user_roles(db: Session, user: models.User) -> list[str]:
@@ -70,6 +74,65 @@ def revoke_all_refresh_tokens(db: Session, user: models.User) -> None:
     db.commit()
 
 
+def list_users(db: Session) -> list[models.User]:
+    stmt = select(models.User).options(selectinload(models.User.roles)).order_by(models.User.id)
+    return db.execute(stmt).scalars().unique().all()
+
+
+def create_user(
+    db: Session,
+    *,
+    username: str,
+    password_hash: str,
+    display_name: Optional[str],
+    is_active: bool,
+    role_names: Optional[Iterable[str]] = None,
+) -> models.User:
+    user = models.User(
+        username=username,
+        password_hash=password_hash,
+        display_name=display_name,
+        is_active=is_active,
+    )
+    if role_names:
+        roles = ensure_roles(db, role_names)
+        user.roles.extend(roles)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def update_user(
+    db: Session,
+    user: models.User,
+    *,
+    display_name: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    password_hash: Optional[str] = None,
+    role_names: Optional[Iterable[str]] = None,
+) -> models.User:
+    if display_name is not None:
+        user.display_name = display_name
+    if is_active is not None:
+        user.is_active = is_active
+    if password_hash is not None:
+        user.password_hash = password_hash
+    if role_names is not None:
+        roles = ensure_roles(db, role_names)
+        user.roles.clear()
+        user.roles.extend(roles)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def delete_user(db: Session, user: models.User) -> None:
+    db.delete(user)
+    db.commit()
+
+
 def get_account_setting(db: Session, user: models.User) -> Optional[models.AccountSetting]:
     stmt = select(models.AccountSetting).where(models.AccountSetting.user_id == user.id)
     return db.execute(stmt).scalar_one_or_none()
@@ -107,11 +170,3 @@ def update_account_setting(
     db.commit()
     db.refresh(setting)
     return setting
-
-def revoke_all_refresh_tokens(db: Session, user: models.User) -> None:
-       db.query(models.RefreshToken).filter(
-           models.RefreshToken.user_id == user.id,
-           models.RefreshToken.revoked.is_(False),
-       ).update({"revoked": True})
-       db.commit()
-

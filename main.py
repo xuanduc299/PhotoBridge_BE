@@ -3,22 +3,480 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
 from .config import get_settings
 from .database import engine
-from .deps import get_db
-from .security import create_access_token, generate_refresh_token, verify_password
+from .deps import AuthenticatedUser, get_db, require_admin
+from .security import create_access_token, generate_refresh_token, hash_password, verify_password
 
 
-TRIAL_POLICY = {"operator": 1}  # days
+TRIAL_POLICY = {"operator": 2}  # days
 
 models.Base.metadata.create_all(bind=engine)
 settings = get_settings()
 
 app = FastAPI(title="PhotoBridge Auth API", version="1.2.0")
+admin_router = APIRouter(prefix="/admin", tags=["admin"])
+
+ADMIN_APP_HTML = """
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>PhotoBridge Admin</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
+    body {
+      font-family: "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      background: #f5f7fb;
+      color: #1f2328;
+    }
+    header {
+      background: #111827;
+      color: #fff;
+      padding: 24px;
+      text-align: center;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 32px auto;
+      padding: 0 16px 48px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(17, 24, 39, 0.08);
+    }
+    h2 {
+      margin-top: 0;
+      font-size: 20px;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin-top: 12px;
+    }
+    input, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #d0d7de;
+      margin-top: 6px;
+      font-size: 15px;
+      box-sizing: border-box;
+    }
+    input[readonly] {
+      background: #f3f4f6;
+    }
+    button {
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    .btn-primary {
+      background: #2563eb;
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: #1d4ed8;
+    }
+    .btn-secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    .btn-danger {
+      background: #dc2626;
+      color: #fff;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+    }
+    th {
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      color: #6b7280;
+    }
+    .status {
+      padding: 8px 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+    .status.error {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+    .status.success {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .hidden {
+      display: none !important;
+    }
+    .table-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .toolbar button {
+      background: #111827;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PhotoBridge Admin Console</h1>
+    <p>Quản lý tài khoản người dùng nhanh chóng, gọn nhẹ.</p>
+  </header>
+  <div class="container">
+    <div id="status" class="status hidden"></div>
+
+    <div id="login-view" class="card">
+      <h2>Đăng nhập quản trị</h2>
+      <form id="login-form">
+        <label for="login-username">Username</label>
+        <input id="login-username" name="username" required />
+        <label for="login-password">Password</label>
+        <input id="login-password" name="password" type="password" required />
+        <button class="btn-primary" style="margin-top:16px;" type="submit">Đăng nhập</button>
+      </form>
+    </div>
+
+    <div id="app-view" class="hidden">
+      <div class="grid">
+        <div class="card" style="grid-column: span 2;">
+          <div class="toolbar">
+            <h2>Danh sách người dùng</h2>
+            <button id="logout-btn">Đăng xuất</button>
+          </div>
+          <div class="table-wrapper">
+            <table id="users-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Username</th>
+                  <th>Tên hiển thị</th>
+                  <th>Roles</th>
+                  <th>Trạng thái</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <h2 id="form-title">Tạo tài khoản mới</h2>
+          <form id="user-form">
+            <label for="user-username">Username</label>
+            <input id="user-username" required />
+
+            <label for="user-password">Password</label>
+            <input id="user-password" type="password" required />
+
+            <label for="user-display">Display name</label>
+            <input id="user-display" />
+
+            <label for="user-roles">Roles (cách nhau bằng dấu phẩy)</label>
+            <input id="user-roles" placeholder="vd: admin,viewer" />
+
+            <label style="display:flex;align-items:center;gap:8px;margin-top:18px;">
+              <input id="user-active" type="checkbox" checked />
+              Kích hoạt tài khoản
+            </label>
+
+            <div style="margin-top:18px; display:flex; gap:12px;">
+              <button id="user-submit" class="btn-primary" type="submit">Tạo user</button>
+              <button id="cancel-edit" class="btn-secondary hidden" type="button">Hủy chỉnh sửa</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const loginView = document.getElementById("login-view");
+    const appView = document.getElementById("app-view");
+    const loginForm = document.getElementById("login-form");
+    const userForm = document.getElementById("user-form");
+    const statusBox = document.getElementById("status");
+    const logoutBtn = document.getElementById("logout-btn");
+    const tableBody = document.querySelector("#users-table tbody");
+    const formTitle = document.getElementById("form-title");
+    const submitBtn = document.getElementById("user-submit");
+    const cancelEditBtn = document.getElementById("cancel-edit");
+    const usernameInput = document.getElementById("user-username");
+    const passwordInput = document.getElementById("user-password");
+    const displayInput = document.getElementById("user-display");
+    const rolesInput = document.getElementById("user-roles");
+    const activeInput = document.getElementById("user-active");
+
+    let accessToken = "";
+    let usersCache = [];
+    let editingUserId = null;
+
+    const setStatus = (message, isError = false) => {
+      if (!message) {
+        statusBox.classList.add("hidden");
+        statusBox.textContent = "";
+        return;
+      }
+      statusBox.textContent = message;
+      statusBox.className = isError ? "status error" : "status success";
+    };
+
+    const resetForm = () => {
+      editingUserId = null;
+      userForm.reset();
+      usernameInput.readOnly = false;
+      usernameInput.required = true;
+      passwordInput.required = true;
+      rolesInput.value = "";
+      activeInput.checked = true;
+      submitBtn.textContent = "Tạo user";
+      formTitle.textContent = "Tạo tài khoản mới";
+      cancelEditBtn.classList.add("hidden");
+    };
+
+    const requireLogin = () => {
+      accessToken = "";
+      appView.classList.add("hidden");
+      loginView.classList.remove("hidden");
+      setStatus("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.", true);
+    };
+
+    const adminFetch = async (url, options = {}) => {
+      const headers = options.headers ? { ...options.headers } : {};
+      if (!(options.body instanceof FormData)) {
+        headers["Content-Type"] = "application/json";
+      }
+      if (accessToken) {
+        headers["Authorization"] = `Bearer ${accessToken}`;
+      }
+      const response = await fetch(url, { ...options, headers });
+      if (response.status === 401) {
+        requireLogin();
+        throw new Error("Unauthorized");
+      }
+      if (!response.ok) {
+        let detail = "Có lỗi xảy ra.";
+        try {
+          const data = await response.json();
+          detail = data.detail || JSON.stringify(data);
+        } catch (_) {}
+        throw new Error(detail);
+      }
+      if (response.status === 204) {
+        return null;
+      }
+      return response.json();
+    };
+
+    const renderUsers = (users) => {
+      usersCache = users;
+      tableBody.innerHTML = "";
+      if (!users.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 6;
+        cell.textContent = "Chưa có user nào.";
+        row.appendChild(cell);
+        tableBody.appendChild(row);
+        return;
+      }
+      users.forEach((user) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${user.id}</td>
+          <td>${user.username}</td>
+          <td>${user.display_name || ""}</td>
+          <td>${user.roles.join(", ")}</td>
+          <td>${user.is_active ? "Active" : "Inactive"}</td>
+        `;
+        const actionsCell = document.createElement("td");
+        actionsCell.className = "table-actions";
+        const editBtn = document.createElement("button");
+        editBtn.textContent = "Sửa";
+        editBtn.className = "btn-secondary";
+        editBtn.addEventListener("click", () => startEdit(user.id));
+        const deleteBtn = document.createElement("button");
+        deleteBtn.textContent = "Xóa";
+        deleteBtn.className = "btn-danger";
+        deleteBtn.addEventListener("click", () => {
+          if (confirm(`Xóa user "${user.username}"?`)) {
+            deleteUser(user.id);
+          }
+        });
+        actionsCell.appendChild(editBtn);
+        actionsCell.appendChild(deleteBtn);
+        row.appendChild(actionsCell);
+        tableBody.appendChild(row);
+      });
+    };
+
+    const loadUsers = async () => {
+      try {
+        const data = await adminFetch("/admin/users");
+        renderUsers(data);
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    };
+
+    const startEdit = (userId) => {
+      const user = usersCache.find((u) => u.id === userId);
+      if (!user) return;
+      editingUserId = user.id;
+      usernameInput.value = user.username;
+      usernameInput.readOnly = true;
+      passwordInput.value = "";
+      passwordInput.required = false;
+      displayInput.value = user.display_name || "";
+      rolesInput.value = user.roles.join(", ");
+      activeInput.checked = Boolean(user.is_active);
+      submitBtn.textContent = "Cập nhật user";
+      formTitle.textContent = `Chỉnh sửa "${user.username}"`;
+      cancelEditBtn.classList.remove("hidden");
+    };
+
+    const deleteUser = async (userId) => {
+      try {
+        await adminFetch(`/admin/users/${userId}`, { method: "DELETE" });
+        setStatus("Đã xóa user.", false);
+        await loadUsers();
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    };
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setStatus("");
+      try {
+        const payload = {
+          username: loginForm.username.value.trim(),
+          password: loginForm.password.value,
+        };
+        const response = await fetch("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.detail || "Đăng nhập thất bại.");
+        }
+        const data = await response.json();
+        if (!data.roles.includes("admin")) {
+          throw new Error("Tài khoản không có quyền admin.");
+        }
+        accessToken = data.access_token;
+        loginView.classList.add("hidden");
+        appView.classList.remove("hidden");
+        setStatus("Đăng nhập thành công.", false);
+        await loadUsers();
+        resetForm();
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+
+    userForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!accessToken) {
+        return requireLogin();
+      }
+      const roleList = rolesInput.value
+        .split(",")
+        .map((role) => role.trim())
+        .filter(Boolean);
+      const payload = {
+        display_name: displayInput.value || null,
+        roles: roleList,
+        is_active: activeInput.checked,
+      };
+      try {
+        if (!editingUserId) {
+          if (!usernameInput.value.trim()) {
+            return setStatus("Username không được để trống.", true);
+          }
+          if (!passwordInput.value) {
+            return setStatus("Password không được để trống.", true);
+          }
+          payload.username = usernameInput.value.trim();
+          payload.password = passwordInput.value;
+          if (!payload.roles.length) {
+            payload.roles = ["viewer"];
+          }
+          await adminFetch("/admin/users", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          setStatus("Đã tạo user mới.", false);
+        } else {
+          if (passwordInput.value) {
+            payload.password = passwordInput.value;
+          }
+          if (!payload.roles.length) {
+            delete payload.roles;
+          }
+          await adminFetch(`/admin/users/${editingUserId}`, {
+            method: "PUT",
+            body: JSON.stringify(payload),
+          });
+          setStatus("Đã cập nhật user.", false);
+        }
+        await loadUsers();
+        resetForm();
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+
+    cancelEditBtn.addEventListener("click", () => {
+      resetForm();
+    });
+
+    logoutBtn.addEventListener("click", () => {
+      requireLogin();
+      setStatus("Bạn đã đăng xuất.", false);
+    });
+  </script>
+</body>
+</html>
+"""
 
 
 @app.get("/health", tags=["system"])
@@ -58,8 +516,90 @@ def refresh(payload: schemas.RefreshRequest, db: Session = Depends(get_db)) -> s
     return _build_session_response(user, roles, db)
 
 
+@admin_router.get("", response_class=HTMLResponse)
+def admin_console() -> HTMLResponse:
+    return HTMLResponse(content=ADMIN_APP_HTML)
+
+
+@admin_router.get("/users", response_model=list[schemas.AdminUserOut])
+def admin_list_users(
+    _: AuthenticatedUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[schemas.AdminUserOut]:
+    users = crud.list_users(db)
+    return [schemas.AdminUserOut.model_validate(user) for user in users]
+
+
+@admin_router.post("/users", response_model=schemas.AdminUserOut, status_code=status.HTTP_201_CREATED)
+def admin_create_user(
+    payload: schemas.AdminUserCreate,
+    _: AuthenticatedUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> schemas.AdminUserOut:
+    if crud.get_user_by_username(db, payload.username):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username đã tồn tại.")
+    password_hash = hash_password(payload.password)
+    user = crud.create_user(
+        db,
+        username=payload.username,
+        password_hash=password_hash,
+        display_name=payload.display_name,
+        is_active=payload.is_active,
+        role_names=payload.roles,
+    )
+    return schemas.AdminUserOut.model_validate(user)
+
+
+@admin_router.put("/users/{user_id}", response_model=schemas.AdminUserOut)
+def admin_update_user(
+    user_id: int,
+    payload: schemas.AdminUserUpdate,
+    current_admin: AuthenticatedUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> schemas.AdminUserOut:
+    user = crud.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy user.")
+    if user.id == current_admin.user.id and payload.is_active is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Không thể tự vô hiệu hóa tài khoản đang đăng nhập.",
+        )
+    password_hash = hash_password(payload.password) if payload.password else None
+    user = crud.update_user(
+        db,
+        user,
+        display_name=payload.display_name,
+        is_active=payload.is_active,
+        password_hash=password_hash,
+        role_names=payload.roles,
+    )
+    return schemas.AdminUserOut.model_validate(user)
+
+
+@admin_router.delete("/users/{user_id}")
+def admin_delete_user(
+    user_id: int,
+    current_admin: AuthenticatedUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    user = crud.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy user.")
+    if user.id == current_admin.user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Không thể xóa tài khoản đang đăng nhập.",
+        )
+    crud.delete_user(db, user)
+    return {"status": "deleted"}
+
+
+app.include_router(admin_router)
+
+
 def _build_session_response(user: models.User, roles: list[str], db: Session) -> schemas.LoginResponse:
-    crud.revoke_all_refresh_tokens(db, user)
+    # crud.revoke_all_refresh_tokens(db, user)
     access_token = create_access_token(subject=user.username, roles=roles)
     refresh_value = generate_refresh_token()
     expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
