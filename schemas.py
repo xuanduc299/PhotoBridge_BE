@@ -32,6 +32,10 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(..., min_length=20)
 
 
+class LogoutRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=20)
+
+
 class AdminUserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -631,6 +631,20 @@ def refresh(payload: schemas.RefreshRequest, db: Session = Depends(get_db)) -> s
     return _build_session_response(user, roles, db)
 
 
+@app.post("/auth/logout", tags=["auth"])
+def logout(payload: schemas.LogoutRequest, db: Session = Depends(get_db)) -> dict[str, str]:
+    """Logout by revoking the refresh token."""
+    if not payload.refresh_token:
+        return {"status": "ok", "message": "No token provided"}
+    
+    record = crud.get_refresh_token(db, payload.refresh_token)
+    if record and not record.revoked:
+        crud.revoke_refresh_token(db, record)
+        return {"status": "ok", "message": "Đã đăng xuất thành công"}
+    
+    return {"status": "ok", "message": "Token đã được thu hồi trước đó"}
+
+
 @admin_router.get("", response_class=HTMLResponse)
 def admin_console() -> HTMLResponse:
     return HTMLResponse(content=ADMIN_APP_HTML)
