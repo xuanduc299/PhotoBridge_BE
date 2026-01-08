@@ -74,6 +74,18 @@ def revoke_all_refresh_tokens(db: Session, user: models.User) -> None:
     db.commit()
 
 
+def count_active_refresh_tokens(db: Session, user: models.User) -> int:
+    """Count non-revoked, non-expired refresh tokens for a user."""
+    from datetime import datetime
+    stmt = select(models.RefreshToken).where(
+        models.RefreshToken.user_id == user.id,
+        models.RefreshToken.revoked.is_(False),
+        models.RefreshToken.expires_at > datetime.utcnow()
+    )
+    result = db.execute(stmt).scalars().all()
+    return len(result)
+
+
 def list_users(db: Session) -> list[models.User]:
     stmt = select(models.User).options(selectinload(models.User.roles)).order_by(models.User.id)
     return db.execute(stmt).scalars().unique().all()

@@ -768,8 +768,13 @@ def _build_session_response(user: models.User, roles: list[str], db: Session) ->
     # Check max_devices policy
     setting = crud.get_account_setting(db, user)
     if setting and setting.max_devices == 1:
-        # Single device mode: revoke all existing tokens
-        crud.revoke_all_refresh_tokens(db, user)
+        # Single device mode: check if already logged in
+        active_count = crud.count_active_refresh_tokens(db, user)
+        if active_count > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Tài khoản này đang được sử dụng trên thiết bị khác. Vui lòng đăng xuất thiết bị đó trước."
+            )
     # TODO: Add logic for max_devices > 1 (count active tokens and revoke oldest if exceeded)
     
     access_token = create_access_token(subject=user.username, roles=roles)
