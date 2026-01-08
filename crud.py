@@ -143,11 +143,13 @@ def create_account_setting(
     user: models.User,
     status: str,
     trial_ends_at: Optional[datetime],
+    max_devices: Optional[int] = None,
 ) -> models.AccountSetting:
     record = models.AccountSetting(
         user=user,
         status=status,
         trial_ends_at=trial_ends_at,
+        max_devices=max_devices,
     )
     db.add(record)
     db.commit()
@@ -161,11 +163,14 @@ def update_account_setting(
     *,
     status: Optional[str] = None,
     trial_ends_at: Optional[datetime] = None,
+    max_devices: Optional[int] = None,
 ) -> models.AccountSetting:
     if status is not None:
         setting.status = status
     if trial_ends_at is not None:
         setting.trial_ends_at = trial_ends_at
+    if max_devices is not None:
+        setting.max_devices = max_devices
     db.add(setting)
     db.commit()
     db.refresh(setting)

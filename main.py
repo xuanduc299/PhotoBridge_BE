@@ -222,6 +222,37 @@ ADMIN_APP_HTML = """
             </div>
           </form>
         </div>
+
+        <div class="card hidden" id="settings-card">
+          <h2 id="settings-title">Account Settings</h2>
+          <form id="settings-form">
+            <input type="hidden" id="settings-user-id" />
+            
+            <label for="settings-username">Username</label>
+            <input id="settings-username" readonly />
+
+            <label for="settings-status">Status</label>
+            <select id="settings-status" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid #d0d7de; margin-top:6px;">
+              <option value="active">Active</option>
+              <option value="trial">Trial</option>
+              <option value="locked">Locked</option>
+            </select>
+
+            <label for="settings-max-devices">Max Devices (0 = unlimited)</label>
+            <input id="settings-max-devices" type="number" min="0" max="100" placeholder="0 = unlimited" />
+            <small style="color:#6b7280; display:block; margin-top:4px;">
+              0/NULL = Unlimited | 1 = Single device | 2+ = Limited devices
+            </small>
+
+            <label for="settings-trial-ends">Trial Ends At (optional)</label>
+            <input id="settings-trial-ends" type="datetime-local" />
+
+            <div style="margin-top:18px; display:flex; gap:12px;">
+              <button class="btn-primary" type="submit">Lưu Settings</button>
+              <button id="cancel-settings" class="btn-secondary" type="button">Đóng</button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   </div>
@@ -242,6 +273,15 @@ ADMIN_APP_HTML = """
     const displayInput = document.getElementById("user-display");
     const rolesInput = document.getElementById("user-roles");
     const activeInput = document.getElementById("user-active");
+    const settingsCard = document.getElementById("settings-card");
+    const settingsForm = document.getElementById("settings-form");
+    const settingsUserId = document.getElementById("settings-user-id");
+    const settingsUsername = document.getElementById("settings-username");
+    const settingsStatus = document.getElementById("settings-status");
+    const settingsMaxDevices = document.getElementById("settings-max-devices");
+    const settingsTrialEnds = document.getElementById("settings-trial-ends");
+    const cancelSettingsBtn = document.getElementById("cancel-settings");
+    const settingsTitle = document.getElementById("settings-title");
 
     let accessToken = "";
     let usersCache = [];
@@ -331,6 +371,12 @@ ADMIN_APP_HTML = """
         editBtn.textContent = "Sửa";
         editBtn.className = "btn-secondary";
         editBtn.addEventListener("click", () => startEdit(user.id));
+        const settingsBtn = document.createElement("button");
+        settingsBtn.textContent = "Settings";
+        settingsBtn.className = "btn-secondary";
+        settingsBtn.style.background = "#10b981";
+        settingsBtn.style.color = "#fff";
+        settingsBtn.addEventListener("click", () => openSettings(user.id, user.username));
         const deleteBtn = document.createElement("button");
         deleteBtn.textContent = "Xóa";
         deleteBtn.className = "btn-danger";
@@ -340,6 +386,7 @@ ADMIN_APP_HTML = """
           }
         });
         actionsCell.appendChild(editBtn);
+        actionsCell.appendChild(settingsBtn);
         actionsCell.appendChild(deleteBtn);
         row.appendChild(actionsCell);
         tableBody.appendChild(row);
@@ -379,6 +426,39 @@ ADMIN_APP_HTML = """
       } catch (error) {
         setStatus(error.message, true);
       }
+    };
+
+    const openSettings = async (userId, username) => {
+      try {
+        settingsUserId.value = userId;
+        settingsUsername.value = username;
+        settingsTitle.textContent = `Settings: ${username}`;
+        
+        // Load current settings
+        const settings = await adminFetch(`/admin/users/${userId}/settings`);
+        settingsStatus.value = settings.status || "active";
+        settingsMaxDevices.value = settings.max_devices === null ? "" : settings.max_devices;
+        
+        if (settings.trial_ends_at) {
+          const date = new Date(settings.trial_ends_at);
+          const localDateTime = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+            .toISOString()
+            .slice(0, 16);
+          settingsTrialEnds.value = localDateTime;
+        } else {
+          settingsTrialEnds.value = "";
+        }
+        
+        settingsCard.classList.remove("hidden");
+        settingsCard.scrollIntoView({ behavior: "smooth" });
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    };
+
+    const closeSettings = () => {
+      settingsCard.classList.add("hidden");
+      settingsForm.reset();
     };
 
     loginForm.addEventListener("submit", async (event) => {
@@ -472,6 +552,41 @@ ADMIN_APP_HTML = """
     logoutBtn.addEventListener("click", () => {
       requireLogin();
       setStatus("Bạn đã đăng xuất.", false);
+    });
+
+    cancelSettingsBtn.addEventListener("click", () => {
+      closeSettings();
+    });
+
+    settingsForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!accessToken) {
+        return requireLogin();
+      }
+      const userId = settingsUserId.value;
+      if (!userId) return;
+
+      const payload = {
+        status: settingsStatus.value,
+        max_devices: settingsMaxDevices.value ? parseInt(settingsMaxDevices.value) : null,
+      };
+
+      if (settingsTrialEnds.value) {
+        payload.trial_ends_at = new Date(settingsTrialEnds.value).toISOString();
+      } else {
+        payload.trial_ends_at = null;
+      }
+
+      try {
+        await adminFetch(`/admin/users/${userId}/settings`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        setStatus("Đã cập nhật account settings.", false);
+        closeSettings();
+      } catch (error) {
+        setStatus(error.message, true);
+      }
     });
   </script>
 </body>
@@ -595,11 +710,68 @@ def admin_delete_user(
     return {"status": "deleted"}
 
 
+@admin_router.get("/users/{user_id}/settings", response_model=schemas.AccountSettingOut)
+def admin_get_account_settings(
+    user_id: int,
+    _: AuthenticatedUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> schemas.AccountSettingOut:
+    user = crud.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User không tồn tại.")
+    setting = crud.get_account_setting(db, user)
+    if not setting:
+        # Create default settings if not exists
+        roles = [role.name for role in user.roles]
+        _ensure_account_entitlement(db, user, roles)
+        setting = crud.get_account_setting(db, user)
+        if not setting:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Không thể tạo account setting.")
+    return setting
+
+
+@admin_router.put("/users/{user_id}/settings", response_model=schemas.AccountSettingOut)
+def admin_update_account_settings(
+    user_id: int,
+    payload: schemas.AccountSettingUpdate,
+    _: AuthenticatedUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> schemas.AccountSettingOut:
+    user = crud.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User không tồn tại.")
+    setting = crud.get_account_setting(db, user)
+    if not setting:
+        # Create default settings if not exists
+        setting = crud.create_account_setting(
+            db,
+            user,
+            status=payload.status or "active",
+            trial_ends_at=payload.trial_ends_at,
+            max_devices=payload.max_devices,
+        )
+    else:
+        setting = crud.update_account_setting(
+            db,
+            setting,
+            status=payload.status,
+            trial_ends_at=payload.trial_ends_at,
+            max_devices=payload.max_devices,
+        )
+    return setting
+
+
 app.include_router(admin_router)
 
 
 def _build_session_response(user: models.User, roles: list[str], db: Session) -> schemas.LoginResponse:
-    # crud.revoke_all_refresh_tokens(db, user)
+    # Check max_devices policy
+    setting = crud.get_account_setting(db, user)
+    if setting and setting.max_devices == 1:
+        # Single device mode: revoke all existing tokens
+        crud.revoke_all_refresh_tokens(db, user)
+    # TODO: Add logic for max_devices > 1 (count active tokens and revoke oldest if exceeded)
+    
     access_token = create_access_token(subject=user.username, roles=roles)
     refresh_value = generate_refresh_token()
     expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)

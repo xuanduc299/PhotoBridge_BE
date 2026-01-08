@@ -68,6 +68,7 @@ class AccountSetting(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
     status = Column(String(20), nullable=False, default="active")
     trial_ends_at = Column(DateTime, nullable=True)
+    max_devices = Column(Integer, nullable=True, default=None)  # None/0 = unlimited, 1 = single device, 2+ = limited
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

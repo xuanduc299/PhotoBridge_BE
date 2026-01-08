@@ -76,3 +76,18 @@ class AdminUserUpdate(BaseModel):
     roles: Optional[List[str]] = None
     is_active: Optional[bool] = None
 
+
+class AccountSettingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    status: str
+    trial_ends_at: Optional[datetime]
+    max_devices: Optional[int]  # None/0 = unlimited, 1 = single device, 2+ = limited devices
+
+
+class AccountSettingUpdate(BaseModel):
+    status: Optional[str] = Field(default=None, pattern="^(active|trial|locked)$")
+    trial_ends_at: Optional[datetime] = None
+    max_devices: Optional[int] = Field(default=None, ge=0, le=100)  # 0 = unlimited, 1-100 = device limit

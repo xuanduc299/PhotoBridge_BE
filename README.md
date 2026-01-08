@@ -28,9 +28,15 @@ ACCESS_TOKEN_EXPIRE_MINUTES=480
 > Cần chạy script từ thư mục gốc dự án để module `backend` được tìm thấy.
 
 ```bash
-cd ..  # quay về thư mục gốc D:\AutoTool\PhotoBridge nếu đang ở backend
+cd ..  # quay về thư mục gốc D:\AutoTool nếu đang ở backend
 python -m backend.init_data
 # Script sẽ tạo bảng + role mặc định và hỏi bạn có muốn tạo user admin hay không
+```
+
+**Nếu database đã tồn tại**, chạy migration để thêm cột `max_devices`:
+
+```bash
+python -m backend.migration_add_max_devices
 ```
 
 Nếu cần tạo hash thủ công (để cập nhật mật khẩu trực tiếp trong DB), dùng:
@@ -64,12 +70,15 @@ API docs: http://localhost:8000/docs
   - Tạo user mới (set username, password, display name, roles, trạng thái active).
   - Sửa user (đổi display name, roles, trạng thái, đặt lại password).
   - Xóa user khác (không thể xóa hoặc vô hiệu hóa tài khoản đang đăng nhập).
+  - **Quản lý device limit**: Set `max_devices` cho từng tài khoản (NULL/0 = unlimited, 1 = single device, 2+ = limited).
 - Endpoint phục vụ giao diện và API quản trị:
   - `GET /admin` → trả về trang HTML.
   - `GET /admin/users` → trả danh sách user (chỉ admin).
   - `POST /admin/users` → tạo user mới.
   - `PUT /admin/users/{user_id}` → cập nhật user.
   - `DELETE /admin/users/{user_id}` → xóa user (trừ user đang đăng nhập).
+  - `GET /admin/users/{user_id}/settings` → xem account settings.
+  - `PUT /admin/users/{user_id}/settings` → cập nhật settings (status, trial_ends_at, max_devices).
 
 ### 7. Deploy (Render/AWS/etc.)
 
