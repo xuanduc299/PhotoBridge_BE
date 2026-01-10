@@ -45,7 +45,7 @@ ADMIN_APP_HTML = """
       text-align: center;
     }
     .container {
-      max-width: 1100px;
+      max-width: 1700px;
       margin: 32px auto;
       padding: 0 16px 48px;
     }
@@ -208,8 +208,12 @@ ADMIN_APP_HTML = """
             <label for="user-display">Display name</label>
             <input id="user-display" />
 
-            <label for="user-roles">Roles (cách nhau bằng dấu phẩy)</label>
-            <input id="user-roles" placeholder="vd: admin,viewer" />
+            <label for="user-roles">Role</label>
+            <select id="user-roles" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid #d0d7de; margin-top:6px;">
+              <option value="admin">Admin</option>
+              <option value="operator">Operator</option>
+              <option value="viewer" selected>Viewer</option>
+            </select>
 
             <label style="display:flex;align-items:center;gap:8px;margin-top:18px;">
               <input id="user-active" type="checkbox" checked />
@@ -244,7 +248,7 @@ ADMIN_APP_HTML = """
               0/NULL = Unlimited | 1 = Single device | 2+ = Limited devices
             </small>
 
-            <label for="settings-trial-ends">Trial Ends At (optional)</label>
+            <label for="settings-trial-ends" id="trial-ends-label">Trial Ends At (chỉ dùng với Trial)</label>
             <input id="settings-trial-ends" type="datetime-local" />
 
             <div style="margin-top:18px; display:flex; gap:12px;">
@@ -303,7 +307,7 @@ ADMIN_APP_HTML = """
       usernameInput.readOnly = false;
       usernameInput.required = true;
       passwordInput.required = true;
-      rolesInput.value = "";
+      rolesInput.value = "operator";  // Default to viewer
       activeInput.checked = true;
       submitBtn.textContent = "Tạo user";
       formTitle.textContent = "Tạo tài khoản mới";
@@ -411,7 +415,8 @@ ADMIN_APP_HTML = """
       passwordInput.value = "";
       passwordInput.required = false;
       displayInput.value = user.display_name || "";
-      rolesInput.value = user.roles.join(", ");
+      // Set selected role (use first role if user has multiple)
+      rolesInput.value = user.roles[0] || "operator";
       activeInput.checked = Boolean(user.is_active);
       submitBtn.textContent = "Cập nhật user";
       formTitle.textContent = `Chỉnh sửa "${user.username}"`;
@@ -498,13 +503,11 @@ ADMIN_APP_HTML = """
       if (!accessToken) {
         return requireLogin();
       }
-      const roleList = rolesInput.value
-        .split(",")
-        .map((role) => role.trim())
-        .filter(Boolean);
+      // Get selected role from dropdown (single role)
+      const selectedRole = rolesInput.value;
       const payload = {
         display_name: displayInput.value || null,
-        roles: roleList,
+        roles: [selectedRole],  // Send as array with single role
         is_active: activeInput.checked,
       };
       try {
@@ -518,7 +521,7 @@ ADMIN_APP_HTML = """
           payload.username = usernameInput.value.trim();
           payload.password = passwordInput.value;
           if (!payload.roles.length) {
-            payload.roles = ["viewer"];
+            payload.roles = ["operator"];
           }
           await adminFetch("/admin/users", {
             method: "POST",
@@ -558,6 +561,23 @@ ADMIN_APP_HTML = """
       closeSettings();
     });
 
+    // Toggle trial ends field based on status
+    settingsStatus.addEventListener("change", () => {
+      const trialEndsLabel = document.getElementById("trial-ends-label");
+      if (settingsStatus.value === "trial") {
+        settingsTrialEnds.disabled = false;
+        trialEndsLabel.style.opacity = "1";
+        settingsTrialEnds.style.opacity = "1";
+      } else {
+        settingsTrialEnds.disabled = true;
+        trialEndsLabel.style.opacity = "0.5";
+        settingsTrialEnds.style.opacity = "0.5";
+        if (settingsStatus.value === "active") {
+          settingsTrialEnds.value = "";  // Clear trial date when active
+        }
+      }
+    });
+
     settingsForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!accessToken) {
@@ -571,10 +591,11 @@ ADMIN_APP_HTML = """
         max_devices: settingsMaxDevices.value ? parseInt(settingsMaxDevices.value) : null,
       };
 
-      if (settingsTrialEnds.value) {
+      // Only include trial_ends_at if status is "trial"
+      if (settingsStatus.value === "trial" && settingsTrialEnds.value) {
         payload.trial_ends_at = new Date(settingsTrialEnds.value).toISOString();
       } else {
-        payload.trial_ends_at = null;
+        payload.trial_ends_at = null;  // Clear trial date for non-trial status
       }
 
       try {
