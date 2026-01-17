@@ -649,7 +649,8 @@ def refresh(payload: schemas.RefreshRequest, db: Session = Depends(get_db)) -> s
     crud.revoke_refresh_token(db, record)
     roles = [role.name for role in user.roles]
     _ensure_account_entitlement(db, user, roles)
-    return _build_session_response(user, roles, db)
+    # Exclude current token from device count (it's being refreshed)
+    return _build_session_response(user, roles, db, exclude_token=payload.refresh_token)
 
 
 @app.post("/auth/logout", tags=["auth"])
@@ -799,12 +800,18 @@ def admin_update_account_settings(
 app.include_router(admin_router)
 
 
-def _build_session_response(user: models.User, roles: list[str], db: Session) -> schemas.LoginResponse:
+def _build_session_response(
+    user: models.User, 
+    roles: list[str], 
+    db: Session,
+    exclude_token: Optional[str] = None
+) -> schemas.LoginResponse:
     # Check max_devices policy
     setting = crud.get_account_setting(db, user)
     if setting and setting.max_devices == 1:
         # Single device mode: check if already logged in
-        active_count = crud.count_active_refresh_tokens(db, user)
+        # Exclude current token when refreshing (it's already being revoked)
+        active_count = crud.count_active_refresh_tokens(db, user, exclude_token=exclude_token)
         if active_count > 0:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
